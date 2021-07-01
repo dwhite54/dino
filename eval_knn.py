@@ -13,6 +13,7 @@
 # limitations under the License.
 import os
 import argparse
+import numpy as np
 
 import torch
 from torch import nn
@@ -26,15 +27,25 @@ import vision_transformer as vits
 
 
 def extract_feature_pipeline(args):
+    
+    train_mean = np.load(args.data_path_train[:-1] + '-mean.npy')
+    train_std = np.load(args.data_path_train[:-1] + '-std.npy')
+    test_mean = np.load(args.data_path_test[:-1] + '-mean.npy')
+    test_std = np.load(args.data_path_test[:-1] + '-std.npy')
+    
     # ============ preparing data ... ============
+    
     transform = pth_transforms.Compose([
         pth_transforms.Resize(256, interpolation=3),
         pth_transforms.CenterCrop(224),
         pth_transforms.ToTensor(),
-        pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        pth_transforms.Normalize(test_mean, test_std),
+        #pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
-    dataset_train = ReturnIndexDataset(os.path.join(args.data_path, "train"), transform=transform)
-    dataset_val = ReturnIndexDataset(os.path.join(args.data_path, "val"), transform=transform)
+    #dataset_train = ReturnIndexDataset(os.path.join(args.data_path, "train"), transform=transform)
+    #dataset_val = ReturnIndexDataset(os.path.join(args.data_path, "val"), transform=transform)
+    dataset_train = datasets.ImageFolder(args.data_path_train, transform=transform)
+    dataset_val = datasets.ImageFolder(args.data_path_test, transform=transform)
     sampler = torch.utils.data.DistributedSampler(dataset_train, shuffle=False)
     data_loader_train = torch.utils.data.DataLoader(
         dataset_train,
@@ -175,6 +186,11 @@ class ReturnIndexDataset(datasets.ImageFolder):
 
 
 if __name__ == '__main__':
+    if 'SM_CHANNEL_TRAIN' not in os.environ:
+        os.environ['SM_CHANNEL_TRAIN'] = ''
+    if 'SM_CHANNEL_TEST' not in os.environ:
+        os.environ['SM_CHANNEL_TEST'] = ''
+        
     parser = argparse.ArgumentParser('Evaluation with weighted k-NN on ImageNet')
     parser.add_argument('--batch_size_per_gpu', default=128, type=int, help='Per-GPU batch-size')
     parser.add_argument('--nb_knn', default=[10, 20, 100, 200], nargs='+', type=int,
@@ -197,7 +213,10 @@ if __name__ == '__main__':
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
     parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
-    parser.add_argument('--data_path', default='/path/to/imagenet/', type=str)
+    #parser.add_argument('--data_path', default='/path/to/imagenet/', type=str)
+    
+    parser.add_argument('--data_path_train', default=os.environ['SM_CHANNEL_TRAIN'], type=str)
+    parser.add_argument('--data_path_test', default=os.environ['SM_CHANNEL_TEST'], type=str)
     args = parser.parse_args()
 
     utils.init_distributed_mode(args)

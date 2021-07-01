@@ -15,6 +15,7 @@ import os
 import argparse
 import json
 from pathlib import Path
+import numpy as np
 
 import torch
 from torch import nn
@@ -26,28 +27,35 @@ from torchvision import transforms as pth_transforms
 import utils
 import vision_transformer as vits
 
-
 def eval_linear(args):
     utils.init_distributed_mode(args)
     print("git:\n  {}\n".format(utils.get_sha()))
     print("\n".join("%s: %s" % (k, str(v)) for k, v in sorted(dict(vars(args)).items())))
     cudnn.benchmark = True
+    train_mean = np.load(args.data_path_train[:-1] + '-mean.npy')
+    train_std = np.load(args.data_path_train[:-1] + '-std.npy')
+    test_mean = np.load(args.data_path_test[:-1] + '-mean.npy')
+    test_std = np.load(args.data_path_test[:-1] + '-std.npy')
 
     # ============ preparing data ... ============
     train_transform = pth_transforms.Compose([
         pth_transforms.RandomResizedCrop(224),
         pth_transforms.RandomHorizontalFlip(),
         pth_transforms.ToTensor(),
-        pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        pth_transforms.Normalize(train_mean, train_std),
+        #pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
     val_transform = pth_transforms.Compose([
         pth_transforms.Resize(256, interpolation=3),
         pth_transforms.CenterCrop(224),
         pth_transforms.ToTensor(),
-        pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        pth_transforms.Normalize(test_mean, test_std),
+        #pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
-    dataset_train = datasets.ImageFolder(os.path.join(args.data_path, "train"), transform=train_transform)
-    dataset_val = datasets.ImageFolder(os.path.join(args.data_path, "val"), transform=val_transform)
+    #dataset_train = datasets.ImageFolder(os.path.join(args.data_path, "train"), transform=train_transform)
+    #dataset_val = datasets.ImageFolder(os.path.join(args.data_path, "val"), transform=val_transform)
+    dataset_train = datasets.ImageFolder(args.data_path_train, transform=train_transform)
+    dataset_val = datasets.ImageFolder(args.data_path_test, transform=val_transform)
     sampler = torch.utils.data.distributed.DistributedSampler(dataset_train)
     train_loader = torch.utils.data.DataLoader(
         dataset_train,
@@ -223,6 +231,11 @@ class LinearClassifier(nn.Module):
 
 
 if __name__ == '__main__':
+    if 'SM_CHANNEL_TRAIN' not in os.environ:
+        os.environ['SM_CHANNEL_TRAIN'] = ''
+    if 'SM_CHANNEL_TEST' not in os.environ:
+        os.environ['SM_CHANNEL_TEST'] = ''
+    
     parser = argparse.ArgumentParser('Evaluation with linear classification on ImageNet')
     parser.add_argument('--n_last_blocks', default=4, type=int, help="""Concatenate [CLS] tokens
         for the `n` last blocks. We use `n=4` when evaluating ViT-Small and `n=1` with ViT-Base.""")
@@ -243,7 +256,9 @@ if __name__ == '__main__':
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
     parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
-    parser.add_argument('--data_path', default='/path/to/imagenet/', type=str)
+    #parser.add_argument('--data_path', default='/path/to/imagenet/', type=str)
+    parser.add_argument('--data_path_train', default=os.environ['SM_CHANNEL_TRAIN'], type=str)
+    parser.add_argument('--data_path_test', default=os.environ['SM_CHANNEL_TEST'], type=str)
     parser.add_argument('--num_workers', default=10, type=int, help='Number of data loading workers per GPU.')
     parser.add_argument('--val_freq', default=1, type=int, help="Epoch frequency for validation.")
     parser.add_argument('--output_dir', default=".", help='Path to save logs and checkpoints')
