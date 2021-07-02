@@ -63,8 +63,10 @@ def get_args_parser():
     "lr": 0.0005, 
     "warmup_epochs": 10, 
     "min_lr": 2e-06, 
-    "global_crops_scale": [0.25, 1.0], 
-    "local_crops_scale": [0.05, 0.25], 
+    "global_crops_scale_low": 0.25, 
+    "global_crops_scale_high": 1.0, 
+    "local_crops_scale_low": 0.05, 
+    "local_crops_scale_high": 0.25, 
     "local_crops_number": 10, 
     "seed": 0, 
     "num_workers": 10, 
@@ -138,14 +140,21 @@ def get_args_parser():
         choices=['adamw', 'sgd', 'lars'], help="""Type of optimizer. We recommend using adamw with ViTs.""")
 
     # Multi-crop parameters
-    parser.add_argument('--global_crops_scale', type=float, nargs='+', default=hyperparameters['global_crops_scale'],
+    parser.add_argument('--global_crops_scale_low', type=float, default=hyperparameters['global_crops_scale_low'],
+        help="""Scale range of the cropped image before resizing, relatively to the origin image.
+        Used for large global view cropping. When disabling multi-crop (--local_crops_number 0), we
+        recommand using a wider range of scale ("--global_crops_scale 0.14 1." for example)""")
+    parser.add_argument('--global_crops_scale_high', type=float, default=hyperparameters['global_crops_scale_high'],
         help="""Scale range of the cropped image before resizing, relatively to the origin image.
         Used for large global view cropping. When disabling multi-crop (--local_crops_number 0), we
         recommand using a wider range of scale ("--global_crops_scale 0.14 1." for example)""")
     parser.add_argument('--local_crops_number', type=int, default=hyperparameters['local_crops_number'], help="""Number of small
         local views to generate. Set this parameter to 0 to disable multi-crop training.
         When disabling multi-crop we recommend to use "--global_crops_scale 0.14 1." """)
-    parser.add_argument('--local_crops_scale', type=float, nargs='+', default=hyperparameters['local_crops_scale'],
+    parser.add_argument('--local_crops_scale_low', type=float, default=hyperparameters['local_crops_scale_low'],
+        help="""Scale range of the cropped image before resizing, relatively to the origin image.
+        Used for small local view cropping of multi-crop.""")
+    parser.add_argument('--local_crops_scale_high', type=float, default=hyperparameters['local_crops_scale_high'],
         help="""Scale range of the cropped image before resizing, relatively to the origin image.
         Used for small local view cropping of multi-crop.""")
 
@@ -155,9 +164,9 @@ def get_args_parser():
     if 'SM_CHANNEL_TEST' not in os.environ:
         os.environ['SM_CHANNEL_TEST'] = '/home/ubuntu/afex-1k/test/'
     if 'SM_NUM_GPUS' not in os.environ:
-        os.environ['SM_NUM_GPUS'] = torch.cuda.device_count()
-    if 'SM_NUM_CPUS' in os.environ:
-        os.environ['SM_NUM_CPUS'] = multiprocessing.cpu_count()
+        os.environ['SM_NUM_GPUS'] = str(torch.cuda.device_count())
+    if 'SM_NUM_CPUS' not in os.environ:
+        os.environ['SM_NUM_CPUS'] = str(multiprocessing.cpu_count())
     if 'SM_OUTPUT_DATA_DIR' not in os.environ:
         os.environ['SM_OUTPUT_DATA_DIR'] = './logs/'
     if 'SM_MODEL_DIR' not in os.environ:
@@ -172,7 +181,7 @@ def get_args_parser():
     parser.add_argument('--model_dir', default=os.environ['SM_MODEL_DIR'], type=str, help='Path to save checkpoints.')
     parser.add_argument('--saveckp_freq', default=20, type=int, help='Save checkpoint every x epochs.')
     parser.add_argument('--seed', default=0, type=int, help='Random seed.')
-    parser.add_argument('--num_workers', default=os.environ['SM_NUM_CPUS']//os.environ['SM_NUM_GPUS'], type=int, help='Number of data loading workers per GPU.')
+    parser.add_argument('--num_workers', default=int(os.environ['SM_NUM_CPUS'])//int(os.environ['SM_NUM_GPUS']), type=int, help='Number of data loading workers per GPU.')
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
     parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
@@ -188,8 +197,8 @@ def train_dino(args):
 
     # ============ preparing data ... ============
     transform = DataAugmentationDINO(
-        args.global_crops_scale,
-        args.local_crops_scale,
+        [args.global_crops_scale_low, args.global_crops_scale_high],
+        [args.local_crops_scale_low, args.local_crops_scale_high],
         args.local_crops_number,
     )
     dataset = datasets.ImageFolder(args.data_path, transform=transform)
@@ -472,7 +481,7 @@ class DataAugmentationDINO(object):
         ])
         normalize = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+            transforms.Normalize((0.34219927, 0.33314697, 0.32398077), (0.27760221, 0.27649638, 0.2744606)),
         ])
 
         # first global crop
